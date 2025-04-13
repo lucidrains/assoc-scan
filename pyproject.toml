@@ -1,0 +1,37 @@
+[project]
+name = "assoc-scan"
+version = "0.0.1"
+description = "Associative Scan"
+authors = [
+    { name = "Phil Wang", email = "lucidrains@gmail.com" }
+]
+readme = "README.md"
+requires-python = ">= 3.8"
+license = { file = "LICENSE" }
+keywords = [
+    'artificial intelligence',
+    'deep learning'
+  ]
+classifiers=[
+    'Development Status :: 4 - Beta',
+    'Intended Audience :: Developers',
+    'Topic :: Scientific/Engineering :: Artificial Intelligence',
+    'License :: OSI Approved :: MIT License',
+    'Programming Language :: Python :: 3.8',
+  ]
+
+dependencies = [
+    'accelerated-scan',
+    'einops>=0.8.0',
+    'torch>=2.0',
+]
+
+[project.urls]
+Homepage = "https://pypi.org/project/assoc-scan/"
+Repository = "https://github.com/lucidrains/assoc-scan"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["assoc_scan"]

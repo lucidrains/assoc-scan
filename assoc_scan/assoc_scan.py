@@ -132,10 +132,27 @@ class AssocScan(Module):
     ):
         reverse = self.reverse
 
+        # handle single dimension
+
+        if gates.ndim == 1:
+            gates = rearrange(gates, 'n -> 1 n')
+
+        if exists(prev) and prev.ndim == 1:
+            prev = rearrange(prev, 'n -> 1 n')
+
+        no_batch = inputs.ndim == 1
+
+        if no_batch:
+            inputs = rearrange(inputs, 'n -> 1 n')
+
+        # handle reverse inefficiently for now
+
         if reverse:
             gates, inputs = gates.flip(1), inputs.flip(1)
 
         remove_prev = default(remove_prev, exists(prev))
+
+        # make sure it is in a shape of (batch, seq, dim)
 
         inputs, inverse_pack_weight_shape = pack_one_with_inverse(inputs, 'b n *')
         gates, _ = pack_one_with_inverse(gates, 'b n *')
@@ -147,16 +164,29 @@ class AssocScan(Module):
             inputs, _ = pack([prev, inputs], 'b * d')
             gates = pad_at_dim(gates, (1, 0), value = 1., dim = -2)
 
-        if not self.use_accelerated:
-            _, out = associative_scan(binary_operator, (gates, inputs))
+        # process the output so that it reflects the `inputs` (batchless or dimensionless)
 
+        def process_output(out):
             if remove_prev:
                 out = out[:, 1:]
 
             if reverse:
                 out = out.flip(1)
 
-            return inverse_pack_weight_shape(out)
+            out = inverse_pack_weight_shape(out)
+
+            if no_batch:
+                out = rearrange(out, '1 ... -> ...')
+
+            return out
+
+        # if not using accelerated or on cpu, just do it the slow way
+
+        if not self.use_accelerated:
+            _, out = associative_scan(binary_operator, (gates, inputs))
+            return process_output(out)
+
+        # use `accelerated_scan`
 
         from accelerated_scan.triton import scan as triton_scan
         from accelerated_scan.warp import scan as warp_scan
@@ -182,10 +212,4 @@ class AssocScan(Module):
 
         out = accelerate_scan_fn(gates, inputs)
 
-        if remove_prev:
-            out = out[:, 1:]
-
-        if reverse:
-            out = out.flip(1)
-
-        return inverse_pack_weight_shape(out)
+        return process_output(out)

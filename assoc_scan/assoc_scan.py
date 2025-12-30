@@ -164,6 +164,8 @@ class AssocScan(Module):
             inputs, _ = pack([prev, inputs], 'b * d')
             gates = pad_at_dim(gates, (1, 0), value = 1., dim = -2)
 
+        gates = gates.expand_as(inputs) # in the case that the gates is broadcasted across dimension
+
         # process the output so that it reflects the `inputs` (batchless or dimensionless)
 
         def process_output(out):

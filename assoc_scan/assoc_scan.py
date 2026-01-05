@@ -128,7 +128,8 @@ class AssocScan(Module):
         gates,
         inputs,
         prev = None,
-        remove_prev = None
+        remove_prev = None,
+        return_next = False
     ):
         reverse = self.reverse
 
@@ -190,10 +191,14 @@ class AssocScan(Module):
 
         # use `accelerated_scan`
 
-        from accelerated_scan.triton import scan as triton_scan
+        try:
+            from accelerated_scan.scalar import scan as triton_scan
+        except ImportError:
+            triton_scan = None
+
         from accelerated_scan.warp import scan as warp_scan
 
-        scan = triton_scan if gates.is_cuda else warp_scan
+        scan = triton_scan if gates.is_cuda and exists(triton_scan) else warp_scan
 
         def accelerate_scan_fn(gates, inputs):
             gates = gates.expand_as(inputs)
@@ -215,3 +220,4 @@ class AssocScan(Module):
         out = accelerate_scan_fn(gates, inputs)
 
         return process_output(out)
+

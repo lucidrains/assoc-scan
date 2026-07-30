@@ -117,11 +117,13 @@ class AssocScan(Module):
     def __init__(
         self,
         use_accelerated = False,
-        reverse = False
+        reverse = False,
+        has_no_feature_dim = False
     ):
         super().__init__()
         self.reverse = reverse
         self.use_accelerated = use_accelerated
+        self.has_no_feature_dim = has_no_feature_dim
 
     def forward(
         self,
@@ -132,19 +134,21 @@ class AssocScan(Module):
         return_next = False
     ):
         reverse = self.reverse
+        has_no_feature_dim = self.has_no_feature_dim
 
         # handle single dimension
 
         if gates.ndim == 1:
             gates = rearrange(gates, 'n -> 1 n')
 
-        if exists(prev) and prev.ndim == 1:
-            prev = rearrange(prev, 'n -> 1 n')
-
         no_batch = inputs.ndim == 1
 
         if no_batch:
             inputs = rearrange(inputs, 'n -> 1 n')
+
+        if exists(prev) and prev.ndim == 1:
+            dim = 0 if no_batch else 1 # 'n -> 1 n' if no_batch else 'b -> b 1'
+            prev = prev.unsqueeze(dim)
 
         # handle reverse inefficiently for now
 
@@ -153,13 +157,21 @@ class AssocScan(Module):
 
         remove_prev = default(remove_prev, exists(prev))
 
+        if has_no_feature_dim:
+            inputs = rearrange(inputs, '... -> ... 1')
+            gates = rearrange(gates, '... -> ... 1')
+
         # make sure it is in a shape of (batch, seq, dim)
 
         inputs, inverse_pack_weight_shape = pack_one_with_inverse(inputs, 'b n *')
         gates, _ = pack_one_with_inverse(gates, 'b n *')
 
         if exists(prev):
-            prev, _ = pack_one_with_inverse(prev, 'b *')
+            if has_no_feature_dim:
+                prev = rearrange(prev, '... -> ... 1')
+
+            prev_pack_pattern = 'b n *' if has_no_feature_dim else 'b *'
+            prev, _ = pack_one_with_inverse(prev, prev_pack_pattern)
 
         if exists(prev):
             inputs, _ = pack([prev, inputs], 'b * d')
@@ -177,6 +189,9 @@ class AssocScan(Module):
                 out = out.flip(1)
 
             out = inverse_pack_weight_shape(out)
+
+            if has_no_feature_dim:
+                out = rearrange(out, '... 1 -> ...')
 
             if no_batch:
                 out = rearrange(out, '1 ... -> ...')
@@ -220,4 +235,3 @@ class AssocScan(Module):
         out = accelerate_scan_fn(gates, inputs)
 
         return process_output(out)
-

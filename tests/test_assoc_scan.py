@@ -6,7 +6,7 @@ def test_assoc_scan_basic():
     scan = AssocScan()
     gates = torch.randn(2, 16, 8).sigmoid()
     inputs = torch.randn(2, 16, 8)
-    
+
     out = scan(gates, inputs)
     assert out.shape == (2, 16, 8)
 
@@ -14,7 +14,7 @@ def test_assoc_scan_reverse():
     scan = AssocScan(reverse = True)
     gates = torch.randn(1, 10, 4).sigmoid()
     inputs = torch.randn(1, 10, 4)
-    
+
     out = scan(gates, inputs)
     assert out.shape == (1, 10, 4)
 
@@ -22,7 +22,7 @@ def test_assoc_scan_no_batch():
     scan = AssocScan()
     gates = torch.randn(10, 4).sigmoid()
     inputs = torch.randn(10, 4)
-    
+
     out = scan(gates, inputs)
     assert out.shape == (10, 4)
 
@@ -31,7 +31,7 @@ def test_assoc_scan_prev():
     gates = torch.randn(1, 10, 4).sigmoid()
     inputs = torch.randn(1, 10, 4)
     prev = torch.randn(1, 4)
-    
+
     out = scan(gates, inputs, prev = prev)
     assert out.shape == (1, 10, 4)
 
@@ -40,6 +40,19 @@ def test_assoc_scan_accelerated_flag(use_accelerated):
     scan = AssocScan(use_accelerated = use_accelerated)
     gates = torch.randn(1, 16, 8).sigmoid()
     inputs = torch.randn(1, 16, 8)
-    
+
     out = scan(gates, inputs)
     assert out.shape == (1, 16, 8)
+
+def test_assoc_scan_prev_no_feature_dim():
+    scan = AssocScan(reverse = True, has_no_feature_dim = True)
+    gates = torch.randn(2, 10).sigmoid()
+    inputs = torch.randn(2, 10)
+    prev = torch.randn(2)
+
+    out = scan(gates, inputs, prev = prev)
+    assert out.shape == (2, 10)
+
+    prev_2d = torch.randn(2, 1)
+    out_2d = scan(gates, inputs, prev = prev_2d)
+    assert out_2d.shape == (2, 10)

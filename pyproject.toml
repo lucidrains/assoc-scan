@@ -1,6 +1,6 @@
 [project]
 name = "assoc-scan"
-version = "0.0.4"
+version = "0.0.6"
 description = "Associative Scan"
 authors = [
     { name = "Phil Wang", email = "lucidrains@gmail.com" }
@@ -32,6 +32,14 @@ Repository = "https://github.com/lucidrains/assoc-scan"
 
 [tool.hatch.metadata]
 allow-direct-references = true
+
+[tool.hatch.build]
+include = [
+    "assoc_scan",
+    "pyproject.toml",
+    "README.md",
+    "LICENSE"
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["assoc_scan"]

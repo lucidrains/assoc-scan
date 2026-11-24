@@ -55,7 +55,8 @@ if hasattr(torch.jit, 'script'): # removed in pytorch 2.16
 
 def associative_scan(
     operator: Callable,
-    elems: tuple[Tensor, Tensor]
+    elems: tuple[Tensor, Tensor],
+    reverse = False
 ):
     num_elems = int(elems[0].shape[1])
 
@@ -71,30 +72,66 @@ def associative_scan(
         if num_elems < 2:
             return elems
 
-        # Combine adjacent pairs of elements.
+        if not reverse:
+            # Combine adjacent pairs of elements.
+
+            reduced_elems = operator(
+              [elem[:, :-1:2] for elem in elems],
+              [elem[:, 1::2] for elem in elems])
+
+            # Recursively compute scan for partially reduced tensors.
+
+            odd_elems = _scan(reduced_elems)
+
+            if num_elems % 2 == 0:
+                even_elems = operator(
+                    [e[:, :-1] for e in odd_elems],
+                    [e[:, 2::2] for e in elems])
+            else:
+                even_elems = operator(
+                    odd_elems,
+                    [e[:, 2::2] for e in elems])
+
+            # The first element of a scan is the same as the first element
+            # of the original `elems`.
+
+            even_elems = [
+              torch.cat([elem[:, :1], result], dim=1)
+              for (elem, result) in zip(elems, even_elems)]
+
+            return list(map(_interleave, even_elems, odd_elems))
+
+        # reverse scan, combining adjacent pairs from the right
+
+        if num_elems % 2 == 0:
+            reduced_elems = operator(
+              [elem[:, 1::2] for elem in elems],
+              [elem[:, :-1:2] for elem in elems])
+
+            even_elems = _scan(reduced_elems)
+
+            odd_elems = operator(
+              [elem[:, 1:] for elem in even_elems],
+              [elem[:, 1:-1:2] for elem in elems])
+
+            odd_elems = [
+              torch.cat([result, elem[:, -1:]], dim=1)
+              for (elem, result) in zip(elems, odd_elems)]
+
+            return list(map(_interleave, even_elems, odd_elems))
 
         reduced_elems = operator(
-          [elem[:, :-1:2] for elem in elems],
-          [elem[:, 1::2] for elem in elems])
-
-        # Recursively compute scan for partially reduced tensors.
+          [elem[:, 2::2] for elem in elems],
+          [elem[:, 1:-1:2] for elem in elems])
 
         odd_elems = _scan(reduced_elems)
 
-        if num_elems % 2 == 0:
-            even_elems = operator(
-                [e[:, :-1] for e in odd_elems],
-                [e[:, 2::2] for e in elems])
-        else:
-            even_elems = operator(
-                odd_elems,
-                [e[:, 2::2] for e in elems])
-
-        # The first element of a scan is the same as the first element
-        # of the original `elems`.
+        even_elems = operator(
+          odd_elems,
+          [elem[:, :-1:2] for elem in elems])
 
         even_elems = [
-          torch.cat([elem[:, :1], result], dim=1)
+          torch.cat([result, elem[:, -1:]], dim=1)
           for (elem, result) in zip(elems, even_elems)]
 
         return list(map(_interleave, even_elems, odd_elems))
@@ -136,6 +173,7 @@ class AssocScan(Module):
         return_next = False
     ):
         reverse = self.reverse
+        use_accelerated = self.use_accelerated
         has_no_feature_dim = self.has_no_feature_dim
 
         # handle single dimension
@@ -148,20 +186,22 @@ class AssocScan(Module):
         if no_batch:
             inputs = rearrange(inputs, 'n -> 1 n')
 
-        if exists(prev) and prev.ndim == 1:
-            dim = 0 if no_batch else 1 # 'n -> 1 n' if no_batch else 'b -> b 1'
-            prev = prev.unsqueeze(dim)
+        if exists(prev):
+            if prev.ndim == 0:
+                prev = rearrange(prev, '-> 1 1')
+            elif prev.ndim == 1:
+                pattern = 'n -> n 1' if has_no_feature_dim else 'n -> 1 n'
+                prev = rearrange(prev, pattern)
 
-        # handle reverse inefficiently for now
+        # accelerated scan has no reverse, so flip the sequence
 
-        if reverse:
+        flip = reverse and use_accelerated
+        native_reverse = reverse and not use_accelerated
+
+        if flip:
             gates, inputs = gates.flip(1), inputs.flip(1)
 
         remove_prev = default(remove_prev, exists(prev))
-
-        if has_no_feature_dim:
-            inputs = rearrange(inputs, '... -> ... 1')
-            gates = rearrange(gates, '... -> ... 1')
 
         # make sure it is in a shape of (batch, seq, dim)
 
@@ -169,15 +209,14 @@ class AssocScan(Module):
         gates, _ = pack_one_with_inverse(gates, 'b n *')
 
         if exists(prev):
-            if has_no_feature_dim:
-                prev = rearrange(prev, '... -> ... 1')
+            prev, _ = pack_one_with_inverse(prev, 'b *')
 
-            prev_pack_pattern = 'b n *' if has_no_feature_dim else 'b *'
-            prev, _ = pack_one_with_inverse(prev, prev_pack_pattern)
-
-        if exists(prev):
-            inputs, _ = pack([prev, inputs], 'b * d')
-            gates = pad_at_dim(gates, (1, 0), value = 1., dim = -2)
+            if native_reverse:
+                inputs, _ = pack([inputs, prev], 'b * d')
+                gates = pad_at_dim(gates, (0, 1), value = 1., dim = -2)
+            else:
+                inputs, _ = pack([prev, inputs], 'b * d')
+                gates = pad_at_dim(gates, (1, 0), value = 1., dim = -2)
 
         gates = gates.expand_as(inputs) # in the case that the gates is broadcasted across dimension
 
@@ -185,15 +224,15 @@ class AssocScan(Module):
 
         def process_output(out):
             if remove_prev:
-                out = out[:, 1:]
+                if native_reverse:
+                    out = out[:, :-1]
+                else:
+                    out = out[:, 1:]
 
-            if reverse:
+            if flip:
                 out = out.flip(1)
 
             out = inverse_pack_weight_shape(out)
-
-            if has_no_feature_dim:
-                out = rearrange(out, '... 1 -> ...')
 
             if no_batch:
                 out = rearrange(out, '1 ... -> ...')
@@ -202,8 +241,8 @@ class AssocScan(Module):
 
         # if not using accelerated or on cpu, just do it the slow way
 
-        if not self.use_accelerated:
-            _, out = associative_scan(binary_operator, (gates, inputs))
+        if not use_accelerated:
+            _, out = associative_scan(binary_operator, (gates, inputs), reverse = reverse)
             return process_output(out)
 
         # use `accelerated_scan`

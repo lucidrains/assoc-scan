@@ -39,7 +39,6 @@ def pack_one_with_inverse(t, pattern):
 
 # the operator that is needed
 
-@torch.jit.script
 def binary_operator(
     a: tuple[Tensor, Tensor],
     b: tuple[Tensor, Tensor]
@@ -47,6 +46,9 @@ def binary_operator(
     a_i, kv_i = a
     a_j, kv_j = b
     return a_j * a_i, torch.addcmul(kv_j, a_j, kv_i)
+
+if hasattr(torch.jit, 'script'): # removed in pytorch 2.16
+    binary_operator = torch.jit.script(binary_operator)
 
 # Pytorch impl. of jax.lax.associative_scan
 # made specifically for axis of 1 (sequence of tokens for autoregressive modeling)
